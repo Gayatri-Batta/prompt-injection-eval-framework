@@ -1,0 +1,59 @@
+# pricing is USD per 1M tokens. These reflect each provider's published rates at the time
+# this file was written -- verify against the provider's pricing page before relying on
+# estimated_cost_usd for real budget decisions, since providers revise pricing periodically.
+
+# Each provider needs its API key set as the named environment variable (in .env or the
+# shell) before any of its models can be run. Adding a new provider/model here is enough
+# for it to show up in the dashboard's Run Experiment picker.
+providers:
+  openai:
+    label: OpenAI
+    api_key_env: OPENAI_API_KEY
+  groq:
+    label: Groq
+    api_key_env: GROQ_API_KEY
+  anthropic:
+    label: Anthropic (Claude)
+    api_key_env: ANTHROPIC_API_KEY
+
+models:
+  - id: gpt-3.5-turbo
+    provider: openai
+    pricing:
+      input_per_1m_usd: 0.50
+      output_per_1m_usd: 1.50
+  - id: gpt-4o-mini
+    provider: openai
+    pricing:
+      input_per_1m_usd: 0.15
+      output_per_1m_usd: 0.60
+  - id: gpt-4o
+    provider: openai
+    pricing:
+      input_per_1m_usd: 2.50
+      output_per_1m_usd: 10.00
+  - id: llama-3.1-8b-instant
+    provider: groq
+    pricing:
+      input_per_1m_usd: 0.05
+      output_per_1m_usd: 0.08
+  - id: llama-3.3-70b-versatile
+    provider: groq
+    pricing:
+      input_per_1m_usd: 0.59
+      output_per_1m_usd: 0.79
+  - id: gemma2-9b-it
+    provider: groq
+    pricing:
+      input_per_1m_usd: 0.20
+      output_per_1m_usd: 0.20
+  - id: claude-3-5-haiku-latest
+    provider: anthropic
+    pricing:
+      input_per_1m_usd: 0.80
+      output_per_1m_usd: 4.00
+  - id: claude-3-5-sonnet-latest
+    provider: anthropic
+    pricing:
+      input_per_1m_usd: 3.00
+      output_per_1m_usd: 15.00

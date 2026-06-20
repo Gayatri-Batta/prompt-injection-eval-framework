@@ -1,0 +1,39 @@
+# Secrets
+.env
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Claude Code local settings (machine-specific, not shared)
+.claude/settings.local.json
+
+# Generated datasets (recreate with scripts/generate_custom_dataset.py or via the dashboard's
+# upload / scenario-selection features -- not source data, so not checked in)
+data/custom_scenarios.jsonl
+data/uploaded_scenarios.jsonl
+data/selected_scenarios.jsonl
+
+# Generated run results, analytics, and reports (recreate by running an experiment, or via
+# scripts/parse_results.py, scripts/build_analytics_db.py, scripts/make_report.py)
+results/runs/**/*.jsonl
+!results/runs/.gitkeep
+results/summary.csv
+results/leaderboard.csv
+results/analytics.duckdb
+reports/final_report.md
+reports/figures/*
+!reports/figures/.gitkeep

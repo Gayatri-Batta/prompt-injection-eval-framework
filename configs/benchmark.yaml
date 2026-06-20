@@ -1,0 +1,39 @@
+mode: pilot
+temperature: 0
+max_output_tokens: 500
+
+judging:
+  enabled: true
+  judge_model: gpt-4o-mini
+  judge_temperature: 0
+  max_judge_output_tokens: 300
+
+datasets:
+  custom:
+    path: data/custom_scenarios.jsonl
+    pilot_limit: 10
+    full_limit: null
+  agentdojo:
+    suite: slack
+    enabled: true
+    # required for any attacked-condition (security) rows to exist at all -- confirm this
+    # name against the installed agentdojo version's attack registry before relying on it.
+    attack: important_instructions
+    pilot_user_tasks:
+      - user_task_0
+      - user_task_1
+      - user_task_2
+      - user_task_3
+      - user_task_4
+
+defenses:
+  - baseline
+  - instruction_boundary
+  - spotlighting
+  - sandwich
+
+output:
+  raw_dir: results/runs
+  summary_csv: results/summary.csv
+  leaderboard_csv: results/leaderboard.csv
+  duckdb_path: results/analytics.duckdb
