@@ -156,6 +156,53 @@ def pct(value: float) -> str:
     return "N/A" if pd.isna(value) else f"{value * 100:.1f}%"
 
 
+# Columns hidden by default on the Run Drilldown table -- low-signal IDs and long free-text
+# fields that make every row wrap to a different height. Toggled via "Show all columns".
+_DRILLDOWN_HIDDEN_COLUMNS = ["scenario_id", "dataset", "user_task", "model_output", "error"]
+
+
+def _best_performer_takeaway(summary_subset: pd.DataFrame):
+    leaderboard = aggregate_leaderboard(summary_subset)
+    if leaderboard.empty or leaderboard["robust_success_rate"].isna().all():
+        return None
+    best = leaderboard.iloc[0]
+    return html.Div(
+        f"Best performer: {best['model']} with {best['defense']} defense "
+        f"({pct(best['robust_success_rate'])} task success under attack).",
+        className="notice",
+        style={"marginTop": "10px"},
+    )
+
+
+def _worst_category_takeaway(summary_subset: pd.DataFrame):
+    attacked_rows = summary_subset[summary_subset["condition"] == "attacked"]
+    if attacked_rows.empty or "category" not in attacked_rows.columns:
+        return None
+    by_category = attacked_rows.groupby("category")["attack_success"].mean().dropna()
+    if by_category.empty:
+        return None
+    worst_category = by_category.idxmax()
+    return html.Div(
+        f"Most attackable category: {worst_category} ({pct(by_category.max())} attack success rate).",
+        className="notice",
+        style={"marginTop": "10px"},
+    )
+
+
+def _drilldown_status_series(frame: pd.DataFrame) -> pd.Series:
+    """Plain-language restatement of the attack_success/robust_success flags already shown
+    via row color, so the outcome doesn't depend on color alone."""
+    attack_success = frame["attack_success"].fillna(False) if "attack_success" in frame.columns else pd.Series(False, index=frame.index)
+    robust_success = frame["robust_success"].fillna(False) if "robust_success" in frame.columns else pd.Series(False, index=frame.index)
+    is_attacked = frame["condition"] == "attacked" if "condition" in frame.columns else pd.Series(False, index=frame.index)
+
+    status = pd.Series("Benign", index=frame.index)
+    status.loc[is_attacked & attack_success] = "Attack succeeded"
+    status.loc[is_attacked & ~attack_success & robust_success] = "Resisted"
+    status.loc[is_attacked & ~attack_success & ~robust_success] = "Task failed"
+    return status
+
+
 def _format_run_timestamp(raw: str) -> str | None:
     try:
         dt = datetime.strptime(raw, "%Y-%m-%d %H:%M:%S")
@@ -243,7 +290,7 @@ run_filter_options = [
 run_filter_values = [opt["value"] for opt in run_filter_options]
 
 app = Dash(__name__, suppress_callback_exceptions=True)
-app.title = "Prompt Injection Safety Lab"
+app.title = "Prompt Injection Evaluation Framework"
 
 app.index_string = """
 <!DOCTYPE html>
@@ -333,12 +380,7 @@ app.layout = html.Div(
     [
         html.Div(
             [
-                html.Div("Agent Safety Analytics", style={"fontSize": "13px", "color": "#bfdbfe", "fontWeight": 800}),
-                html.H1("Prompt Injection Safety Lab"),
-                html.Div(
-                    "Run real model evaluations across OpenAI, Groq, and Anthropic on generated or uploaded workplace prompt-injection datasets.",
-                    style={"color": "#dbeafe", "maxWidth": "780px"},
-                ),
+                html.H1("Prompt Injection Evaluation Framework"),
             ],
             className="hero",
         ),
@@ -402,6 +444,8 @@ app.layout = html.Div(
                 ),
             ],
             className="shell",
+            id="app-shell",
+            style={"gridTemplateColumns": "1fr"},
         ),
     ],
     className="app",
@@ -410,12 +454,13 @@ app.layout = html.Div(
 
 @app.callback(
     Output("results-filters-section", "style"),
+    Output("app-shell", "style"),
     Input("tabs", "value"),
 )
 def toggle_results_filters(tab):
     if tab == "experiment":
-        return {"display": "none"}
-    return {"display": "block"}
+        return {"display": "none"}, {"gridTemplateColumns": "1fr"}
+    return {"display": "block"}, {"gridTemplateColumns": "292px 1fr"}
 
 
 def _apply_sidebar_filters(summary, selected_models, selected_defenses, selected_datasets, selected_runs):
@@ -494,11 +539,14 @@ def _run_history_header_row():
         style={
             "display": "grid",
             "gridTemplateColumns": _RUN_HISTORY_GRID_COLUMNS,
-            "padding": "4px 14px",
+            "padding": "10px 14px",
             "fontSize": "12px",
             "fontWeight": 800,
-            "color": COLORS["muted"],
+            "color": COLORS["ink"],
             "textTransform": "uppercase",
+            "background": "#eef2ff",
+            "borderRadius": "8px 8px 0 0",
+            "borderBottom": f"1px solid {COLORS['line']}",
         },
     )
 
@@ -625,6 +673,7 @@ def update_dashboard(selected_models, selected_defenses, selected_datasets, sele
                 html.H3(chart_heading, style={"marginTop": 0, "marginBottom": "2px"}),
                 html.Div(chart_subtitle, className="muted", style={"marginBottom": "10px"}),
                 _leaderboard_charts(latest_summary),
+                _best_performer_takeaway(latest_summary),
                 html.H3("Run History", style={"marginTop": "26px", "marginBottom": "2px"}),
                 html.Div(
                     "Every experiment run currently selected by the sidebar filters -- grouped by when the run "
@@ -649,11 +698,12 @@ def update_dashboard(selected_models, selected_defenses, selected_datasets, sele
                     style={"marginBottom": "10px"},
                 ),
                 dcc.Graph(figure=category_attack_rate(summary), config={"displaylogo": False}),
-                html.H3("Scenario Vulnerability Heatmap", style={"marginTop": "20px", "marginBottom": "2px"}),
+                _worst_category_takeaway(summary),
+                html.H3("Most Vulnerable Scenarios", style={"marginTop": "20px", "marginBottom": "2px"}),
                 html.Div(
-                    "Attack success rate for every individual scenario, by model. Darker red means that model "
-                    "was successfully attacked more often on that specific scenario -- useful for spotting "
-                    "individual weak points rather than category-level trends.",
+                    "The 15 individual scenarios with the highest attack success rate, by model -- useful for "
+                    "spotting specific weak points rather than category-level trends. If fewer than 15 scenarios "
+                    "match the sidebar filters, all of them are shown.",
                     className="muted",
                     style={"marginBottom": "10px"},
                 ),
@@ -663,11 +713,18 @@ def update_dashboard(selected_models, selected_defenses, selected_datasets, sele
         )
     else:
         table_cols = [
-            "run_timestamp", "model", "dataset", "scenario_id", "category", "attack_technique", "severity", "user_task",
-            "defense", "condition", "task_success", "attack_success", "robust_success",
-            "latency_seconds", "total_cost_usd", "error", "model_output",
+            "run_timestamp", "model", "defense", "category", "attack_technique", "severity", "condition",
+            "status", "task_success", "attack_success", "latency_seconds", "total_cost_usd",
+            "scenario_id", "dataset", "user_task", "model_output", "error",
         ]
-        visible = summary[[c for c in table_cols if c in summary.columns]].head(300)
+        visible = summary.head(300).copy()
+        visible["status"] = _drilldown_status_series(visible)
+        visible = visible[[c for c in table_cols if c in visible.columns]]
+        truncated_cols = [c for c in ("user_task", "model_output", "error") if c in visible.columns]
+        tooltip_data = [
+            {col: {"value": str(row[col]), "type": "text"} for col in truncated_cols if pd.notna(row.get(col))}
+            for row in visible.to_dict("records")
+        ]
         content = html.Div(
             [
                 html.H3("Run Drilldown", style={"marginTop": 0, "marginBottom": "2px"}),
@@ -680,19 +737,40 @@ def update_dashboard(selected_models, selected_defenses, selected_datasets, sele
                 ),
                 html.Div(
                     "Red row = the injected attack succeeded (defense failed). Green row = task success "
-                    "under attack (task completed and the attack was resisted).",
+                    "under attack (task completed and the attack was resisted). The Status column states the "
+                    "same outcome in words. Scenario ID, dataset, full task/output text, and errors are hidden "
+                    "by default -- use \"Toggle Columns\" above the table to show them.",
                     className="muted",
                     style={"marginBottom": "10px"},
                 ),
                 dash_table.DataTable(
+                    id="drilldown-table",
                     data=visible.to_dict("records"),
                     columns=[{"name": col, "id": col} for col in visible.columns],
+                    hidden_columns=_DRILLDOWN_HIDDEN_COLUMNS,
+                    tooltip_data=tooltip_data,
+                    tooltip_delay=300,
+                    tooltip_duration=None,
                     page_size=12,
                     filter_action="native",
                     sort_action="native",
                     style_table={"overflowX": "auto"},
                     style_header={"backgroundColor": "#eef2ff", "fontWeight": "800", "border": "0"},
-                    style_cell={"textAlign": "left", "whiteSpace": "normal", "height": "auto", "fontFamily": "Segoe UI, Arial, sans-serif", "fontSize": "12px", "padding": "10px", "border": f"1px solid {COLORS['line']}"},
+                    style_cell={
+                        "textAlign": "left",
+                        "whiteSpace": "nowrap",
+                        "overflow": "hidden",
+                        "textOverflow": "ellipsis",
+                        "height": "44px",
+                        "lineHeight": "20px",
+                        "fontFamily": "Segoe UI, Arial, sans-serif",
+                        "fontSize": "12px",
+                        "padding": "10px",
+                        "border": f"1px solid {COLORS['line']}",
+                    },
+                    style_cell_conditional=[
+                        {"if": {"column_id": col}, "maxWidth": "260px"} for col in truncated_cols
+                    ],
                     style_data_conditional=[
                         {"if": {"filter_query": "{attack_success} = true"}, "backgroundColor": "#fef2f2"},
                         {"if": {"filter_query": "{robust_success} = true"}, "backgroundColor": "#ecfdf5"},
