@@ -336,6 +336,7 @@ def run_custom(args: argparse.Namespace) -> Path:
                             "severity": scenario.get("severity"),
                             "defense": defense,
                             "condition": condition,
+                            "judge_model": judge_model if judging_enabled else None,
                             "latency_seconds": latency,
                             "estimated_cost_usd": estimated_cost_usd,
                             "judge_cost_usd": judge_cost_usd,

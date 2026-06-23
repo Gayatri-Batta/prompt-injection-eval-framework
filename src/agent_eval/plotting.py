@@ -108,29 +108,35 @@ def utility_vs_attack(leaderboard: pd.DataFrame):
     return polish(fig, percent_axis="both")
 
 
-def category_attack_rate(summary: pd.DataFrame):
+def category_attack_rate(summary: pd.DataFrame, show_sample_size: bool = False):
     attacked = summary[summary["condition"] == "attacked"]
     if attacked.empty:
         return go.Figure()
     grouped = (
         attacked.groupby(["category", "model"], dropna=False)["attack_success"]
-        .mean()
+        .agg(["mean", "size"])
         .reset_index()
+        .rename(columns={"mean": "attack_success", "size": "n"})
     )
     category_order = (
         attacked.groupby("category")["attack_success"].mean().sort_values(ascending=False).index.tolist()
     )
-    fig = px.bar(
-        grouped,
+    bar_kwargs = dict(
         x="category",
         y="attack_success",
         color="model",
         barmode="group",
-        text_auto=".0%",
         category_orders={"category": category_order},
         title="Which scenario categories are easiest to attack?",
         labels={"attack_success": "Attack success rate", "category": "Scenario category"},
     )
+    if show_sample_size:
+        # Pooling across runs means a model/category bar may rest on very few (or zero) attempts --
+        # show the sample size directly on the bar so a thin bar doesn't read as a confident result.
+        grouped["bar_text"] = grouped.apply(lambda r: f"{r['attack_success'] * 100:.0f}% (n={int(r['n'])})", axis=1)
+        fig = px.bar(grouped, text="bar_text", **bar_kwargs)
+    else:
+        fig = px.bar(grouped, text_auto=".0%", **bar_kwargs)
     fig.update_traces(textposition="outside")
     overall_rate = attacked["attack_success"].mean()
     fig.add_hline(
@@ -144,28 +150,65 @@ def category_attack_rate(summary: pd.DataFrame):
     return polish(fig, percent_axis="y")
 
 
-def task_heatmap(summary: pd.DataFrame):
+def _readable(text) -> str:
+    return str(text).replace("_", " ").strip().title()
+
+
+def _scenario_labels(attacked: pd.DataFrame, scenario_ids: list[str]) -> dict[str, str]:
+    """Human-readable label per scenario_id built from category + attack_technique. Only
+    `category` is guaranteed present (required for any custom upload); `attack_technique` is
+    merely recommended, and the two together are NOT guaranteed unique -- a dataset can easily
+    have several scenarios sharing one category/technique pair. So the readable part is just
+    context, and the actual scenario_id (required + validated-unique at upload time, see
+    validate_scenario_rows in custom_dataset.py) is always appended -- guaranteed unique and
+    traceable back to a row in Detailed Results, unlike a counter suffix that tells you nothing."""
+    first_rows = attacked[attacked["scenario_id"].isin(scenario_ids)].drop_duplicates("scenario_id").set_index("scenario_id")
+    labels: dict[str, str] = {}
+    for sid in scenario_ids:
+        row = first_rows.loc[sid] if sid in first_rows.index else None
+        category = row.get("category") if row is not None else None
+        technique = row.get("attack_technique") if row is not None else None
+        if pd.notna(category) and pd.notna(technique):
+            context = f"{_readable(category)} - {_readable(technique)}"
+        elif pd.notna(category):
+            context = _readable(category)
+        else:
+            context = None
+        labels[sid] = f"{context} ({sid})" if context else str(sid)
+    return labels
+
+
+def task_heatmap(summary: pd.DataFrame, show_sample_size: bool = False):
     attacked = summary[summary["condition"] == "attacked"]
     if attacked.empty:
         return go.Figure()
     by_scenario = attacked.groupby("scenario_id")["attack_success"].mean().sort_values(ascending=False)
     worst_ids = by_scenario.head(TOP_N_WORST_SCENARIOS).index.tolist()
+    labels = _scenario_labels(attacked, worst_ids)
     filtered = attacked[attacked["scenario_id"].isin(worst_ids)].copy()
-    filtered["scenario_label"] = filtered["scenario_id"].astype(str).str.replace("_", " ").str.title()
-    label_order = [str(sid).replace("_", " ").title() for sid in worst_ids]
-    grouped = filtered.groupby(["scenario_label", "model"], dropna=False)["attack_success"].mean().reset_index()
+    filtered["scenario_label"] = filtered["scenario_id"].map(labels)
+    label_order = [labels[sid] for sid in worst_ids]
+    grouped = (
+        filtered.groupby(["scenario_label", "model"], dropna=False)["attack_success"]
+        .agg(["mean", "size"])
+        .reset_index()
+        .rename(columns={"mean": "attack_success", "size": "n"})
+    )
     shown = len(worst_ids)
-    fig = px.bar(
-        grouped,
+    bar_kwargs = dict(
         x="attack_success",
         y="scenario_label",
         color="model",
         orientation="h",
         barmode="group",
-        text_auto=".0%",
         category_orders={"scenario_label": label_order},
         title=f"Which scenarios are most vulnerable to attack? (top {shown})",
         labels={"attack_success": "Attack success rate", "scenario_label": "Scenario"},
     )
+    if show_sample_size:
+        grouped["bar_text"] = grouped.apply(lambda r: f"{r['attack_success'] * 100:.0f}% (n={int(r['n'])})", axis=1)
+        fig = px.bar(grouped, text="bar_text", **bar_kwargs)
+    else:
+        fig = px.bar(grouped, text_auto=".0%", **bar_kwargs)
     fig.update_traces(textposition="outside")
     return polish(fig, percent_axis="x")

@@ -24,13 +24,13 @@ Open the local Dash URL printed by the final command, usually:
 http://127.0.0.1:8050
 ```
 
-Use the **Run Experiment** tab to configure a run. Settings are grouped into three collapsible sections (only one open at a time, each summarized when collapsed):
+Use the **Run Evaluation** tab to configure a run. Settings are grouped into three collapsible sections (only one open at a time, each summarized when collapsed):
 
 1. **Dataset** -- pick the default generated dataset or upload your own (`.jsonl`, `.json`, or `.csv`).
 2. **Models and Defenses** -- pick one or more models and one or more defenses, and (if LLM-judge scoring is on) which judge model to use.
 3. **Scenario Filters** -- optionally narrow scenarios by type, attack technique, or severity (leave any empty to include everything on that axis), then set how many scenarios to sample from whatever matches.
 
-The **Run Summary** panel above the Run Experiment button estimates the number of evaluations, API calls, and cost for your current selections before you commit to a run. Click **Run Experiment** to launch real model calls -- the **Experiment Status** panel shows live **Progress** (step-by-step checklist) and **Logs**. Once a run finishes, the app parses results, rebuilds DuckDB analytics, refreshes the report, and the dashboard's Overview, Scenario Analysis, and Run Drilldown tabs reflect the new data, labeled with the completion timestamp.
+The **Run Summary** panel above the Run Evaluation button estimates the number of evaluations, API calls, and cost for your current selections before you commit to a run. Click **Run Evaluation** to launch real model calls -- the **Evaluation Status** panel shows live **Progress** (step-by-step checklist) and **Logs**. Once a run finishes, the app parses results, rebuilds DuckDB analytics, refreshes the report, and the dashboard's Model Comparison, Vulnerability Analysis, and Detailed Results tabs reflect the new data, labeled with the completion timestamp.
 
 ## Models and API Keys
 
@@ -60,13 +60,13 @@ Responses can be scored two ways, controlled by `judging.enabled` in `configs/be
 - **LLM-as-judge** (default) -- a judge model (e.g. `gpt-4o-mini`) evaluates whether the task was completed and whether the attack succeeded. Each scenario makes one call for the response and a second call for the judge's evaluation.
 - **Keyword matching** -- a fallback/cheaper mode that checks for expected/forbidden keywords in the model's output. Always computed alongside judge scores as `keyword_task_success` / `keyword_attack_success` for comparison.
 
-## Overview Tab and Run History
+## Model Comparison Tab and Run History
 
-Every model/defense combination launched from one click of **Run Experiment** (or one CLI invocation) is grouped together as a single "run," identified by when it was submitted. The Overview tab charts the most recent run by default, and lists every run in an expandable history -- open any run to see its own model/defense breakdown without other runs mixed in.
+Every model/defense combination launched from one click of **Run Evaluation** (or one CLI invocation) is grouped together as a single "run," identified by when it was submitted. The Model Comparison tab charts the most recent run by default, and lists every run in an expandable history -- open any run to see its own model/defense breakdown without other runs mixed in.
 
 ## Custom Datasets
 
-Upload your own dataset as `.jsonl` (one JSON object per line), `.json` (a top-level array of objects), or `.csv`. Required and recommended fields, plus an example row, are shown in the "Dataset format for uploads" section of the Run Experiment tab. An upload that's missing required fields, has duplicate `scenario_id`s, or fails to parse is rejected with a specific error before it's used.
+Upload your own dataset as `.jsonl` (one JSON object per line), `.json` (a top-level array of objects), or `.csv`. Required and recommended fields, plus an example row, are shown in the "Dataset format for uploads" section of the Run Evaluation tab. An upload that's missing required fields, has duplicate `scenario_id`s, or fails to parse is rejected with a specific error before it's used.
 
 ## AgentDojo
 

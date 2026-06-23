@@ -41,6 +41,7 @@ SUMMARY_COLUMNS = [
     "severity",
     "defense",
     "condition",
+    "judge_model",
     "task_success",
     "attack_success",
     "robust_success",

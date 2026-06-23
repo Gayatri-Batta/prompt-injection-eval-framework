@@ -48,7 +48,6 @@ UPLOAD_PATH = ROOT / "data" / "uploaded_scenarios.jsonl"
 SELECTED_PATH = ROOT / "data" / "selected_scenarios.jsonl"
 
 _PROJECT_CONFIG = load_project_config()
-DEFAULT_MODELS = [m["id"] for m in _PROJECT_CONFIG.models]
 DEFAULT_DEFENSES = _PROJECT_CONFIG.benchmark["defenses"]
 JUDGING_CFG = _PROJECT_CONFIG.benchmark.get("judging") or {}
 
@@ -127,10 +126,6 @@ def load_data() -> pd.DataFrame:
     return summary
 
 
-def dropdown_options(values):
-    return [{"label": str(value), "value": value} for value in values]
-
-
 def category_dropdown_options(scenarios: list[dict]) -> list[dict]:
     counts = category_counts(scenarios)
     return [{"label": category, "value": category} for category in sorted(counts)]
@@ -156,7 +151,7 @@ def pct(value: float) -> str:
     return "N/A" if pd.isna(value) else f"{value * 100:.1f}%"
 
 
-# Columns hidden by default on the Run Drilldown table -- low-signal IDs and long free-text
+# Columns hidden by default on the Detailed Results table -- low-signal IDs and long free-text
 # fields that make every row wrap to a different height. Toggled via "Show all columns".
 _DRILLDOWN_HIDDEN_COLUMNS = ["scenario_id", "dataset", "user_task", "model_output", "error"]
 
@@ -274,21 +269,6 @@ def write_scenario_rows_jsonl(rows: list[dict], path: Path) -> None:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-summary_df = load_data()
-models = sorted(set(DEFAULT_MODELS) | set(summary_df["model"].dropna().unique())) if not summary_df.empty else DEFAULT_MODELS
-defenses = sorted(set(DEFAULT_DEFENSES) | set(summary_df["defense"].dropna().unique())) if not summary_df.empty else DEFAULT_DEFENSES
-datasets = sorted(set(["custom", "uploaded"]) | set(summary_df["dataset"].dropna().unique())) if not summary_df.empty else ["custom", "uploaded"]
-
-_run_history_initial = summarize_runs(summary_df) if not summary_df.empty else pd.DataFrame()
-run_filter_options = [
-    {
-        "label": f"{row['run_timestamp'] or 'unknown time'} — {row['dataset'] or 'n/a'} — {row['models'] or 'n/a'}",
-        "value": row["run_group_id"],
-    }
-    for _, row in _run_history_initial.iterrows()
-]
-run_filter_values = [opt["value"] for opt in run_filter_options]
-
 app = Dash(__name__, suppress_callback_exceptions=True)
 app.title = "Prompt Injection Evaluation Framework"
 
@@ -305,8 +285,7 @@ app.index_string = """
             .app { font-family: Inter, Segoe UI, Arial, sans-serif; color: #172033; }
             .hero { background: linear-gradient(135deg, #111827 0%, #1d4ed8 100%); color: white; padding: 26px 34px; display: flex; justify-content: space-between; gap: 24px; align-items: center; }
             .hero h1 { margin: 6px 0; font-size: 30px; letter-spacing: 0; }
-            .shell { display: grid; grid-template-columns: 292px 1fr; min-height: calc(100vh - 112px); }
-            .sidebar { background: white; border-right: 1px solid #d7deea; padding: 20px; }
+            .shell { display: grid; grid-template-columns: 1fr; min-height: calc(100vh - 112px); }
             .main { padding: 20px; overflow: hidden; }
             .filter-label { display: block; margin: 15px 0 6px; font-size: 13px; font-weight: 850; color: #4b5563; text-transform: uppercase; }
             .card { background: white; border: 1px solid #d7deea; border-radius: 8px; padding: 16px; box-shadow: 0 8px 22px rgba(20, 32, 55, 0.05); }
@@ -317,6 +296,8 @@ app.index_string = """
             button:disabled { opacity: 0.55; cursor: wait; }
             .notice { border-radius: 8px; padding: 12px; font-size: 13px; background: white; border: 1px solid #d7deea; }
             .dash-table-container .dash-spreadsheet-container { border-radius: 8px; }
+            /* Native column show/hide menu is unreliable (position breaks on scroll) -- replaced with our own checkbox. */
+            button.show-hide { display: none; }
             .tab-container { border-bottom: 1px solid #d7deea; }
             .tab { font-weight: 700; color: #4b5563; background: #eef1f7; transition: background 0.15s ease, color 0.15s ease; }
             .tab:hover { background: #e3e8f3; color: #172033; }
@@ -386,36 +367,25 @@ app.layout = html.Div(
         ),
         html.Div(
             [
-                html.Aside(
-                    [
-                        html.Div(
-                            [
-                                html.H3("Results Filters", style={"marginTop": 0}),
-                                html.Label("Model", className="filter-label"),
-                                dcc.Dropdown(id="model-filter", options=dropdown_options(models), value=models, multi=True),
-                                html.Label("Defense", className="filter-label"),
-                                dcc.Dropdown(id="defense-filter", options=dropdown_options(defenses), value=defenses, multi=True),
-                                html.Label("Dataset", className="filter-label"),
-                                dcc.Dropdown(id="dataset-filter", options=dropdown_options(datasets), value=datasets, multi=True),
-                                html.Label("Run", className="filter-label"),
-                                dcc.Dropdown(
-                                    id="run-filter",
-                                    options=run_filter_options,
-                                    value=run_filter_values,
-                                    multi=True,
-                                    placeholder="All runs",
-                                ),
-                            ],
-                            id="results-filters-section",
-                            style={"display": "none"},
-                        ),
-                    ],
-                    className="sidebar",
-                ),
                 html.Main(
                     [
                         dcc.Store(id="run-completed-store"),
                         html.Div(id="kpi-running-banner", className="notice", style={"display": "none", "marginBottom": "10px"}),
+                        html.Div(
+                            [
+                                html.Label("Showing results for", className="filter-label", style={"margin": "0 10px 0 0"}),
+                                dcc.Dropdown(
+                                    id="run-scope",
+                                    options=[{"label": "Latest run", "value": "__latest__"}],
+                                    value="__latest__",
+                                    clearable=False,
+                                    searchable=False,
+                                    style={"width": "420px"},
+                                ),
+                            ],
+                            id="run-scope-row",
+                            style={"display": "flex", "alignItems": "center", "marginBottom": "10px"},
+                        ),
                         html.Div(id="kpi-run-status", className="muted", style={"marginBottom": "10px"}),
                         html.Div(
                             [
@@ -431,10 +401,10 @@ app.layout = html.Div(
                             id="tabs",
                             value="experiment",
                             children=[
-                                dcc.Tab(label="Run Experiment", value="experiment"),
-                                dcc.Tab(label="Overview", value="overview"),
-                                dcc.Tab(label="Scenario Analysis", value="scenarios"),
-                                dcc.Tab(label="Run Drilldown", value="runs"),
+                                dcc.Tab(label="Run Evaluation", value="experiment"),
+                                dcc.Tab(label="Model Comparison", value="overview"),
+                                dcc.Tab(label="Vulnerability Analysis", value="scenarios"),
+                                dcc.Tab(label="Detailed Results", value="runs"),
                             ],
                             style={"marginTop": "18px"},
                         ),
@@ -444,35 +414,11 @@ app.layout = html.Div(
                 ),
             ],
             className="shell",
-            id="app-shell",
             style={"gridTemplateColumns": "1fr"},
         ),
     ],
     className="app",
 )
-
-
-@app.callback(
-    Output("results-filters-section", "style"),
-    Output("app-shell", "style"),
-    Input("tabs", "value"),
-)
-def toggle_results_filters(tab):
-    if tab == "experiment":
-        return {"display": "none"}, {"gridTemplateColumns": "1fr"}
-    return {"display": "block"}, {"gridTemplateColumns": "292px 1fr"}
-
-
-def _apply_sidebar_filters(summary, selected_models, selected_defenses, selected_datasets, selected_runs):
-    if selected_models:
-        summary = summary[summary["model"].isin(selected_models)]
-    if selected_defenses:
-        summary = summary[summary["defense"].isin(selected_defenses)]
-    if selected_datasets:
-        summary = summary[summary["dataset"].isin(selected_datasets)]
-    if selected_runs and "run_group_id" in summary.columns:
-        summary = summary[summary["run_group_id"].isin(selected_runs)]
-    return summary
 
 
 def _leaderboard_charts(summary_subset: pd.DataFrame):
@@ -499,7 +445,7 @@ def _leaderboard_charts(summary_subset: pd.DataFrame):
 
 def _run_leaderboard_table(summary_subset: pd.DataFrame):
     """Model x defense breakdown table for one run's rows. Includes `dataset` as a plain
-    column (constant within a run, since one Run Experiment click uses a single dataset) so
+    column (constant within a run, since one Run Evaluation click uses a single dataset) so
     each accordion section is self-contained without needing a separate date/time column --
     the run's date/time is already the accordion header."""
     if summary_subset.empty:
@@ -581,6 +527,44 @@ def _run_accordion_section(run_row, run_summary: pd.DataFrame, is_open: bool):
 
 
 @app.callback(
+    Output("run-scope-row", "style"),
+    Input("tabs", "value"),
+)
+def toggle_run_scope_visibility(tab):
+    if tab == "experiment":
+        return {"display": "none"}
+    return {"display": "flex", "alignItems": "center", "marginBottom": "10px"}
+
+
+@app.callback(
+    Output("run-scope", "options"),
+    Output("run-scope", "value"),
+    Input("tabs", "value"),
+    Input("run-completed-store", "data"),
+    State("run-scope", "value"),
+)
+def update_run_scope_options(_tab, _run_completed_token, current_value):
+    full_summary = load_data()
+    run_history_full = summarize_runs(full_summary) if not full_summary.empty else pd.DataFrame()
+
+    options = [{"label": "Latest run", "value": "__latest__"}]
+    for _, row in run_history_full.iterrows():
+        timestamp = row["run_timestamp"] or "unknown time"
+        options.append(
+            {
+                "label": f"{timestamp} -- {row['dataset'] or 'n/a'} -- {row['models'] or 'n/a'}",
+                "value": row["run_group_id"],
+            }
+        )
+    options.append({"label": "All runs (pooled)", "value": "__all__"})
+
+    valid_values = {opt["value"] for opt in options}
+    if ctx.triggered_id == "run-completed-store" or current_value not in valid_values:
+        return options, "__latest__"
+    return options, no_update
+
+
+@app.callback(
     Output("kpi-runs", "children"),
     Output("kpi-robust", "children"),
     Output("kpi-attack", "children"),
@@ -588,14 +572,11 @@ def _run_accordion_section(run_row, run_summary: pd.DataFrame, is_open: bool):
     Output("kpi-cost", "children"),
     Output("kpi-run-status", "children"),
     Output("tab-content", "children"),
-    Input("model-filter", "value"),
-    Input("defense-filter", "value"),
-    Input("dataset-filter", "value"),
-    Input("run-filter", "value"),
     Input("tabs", "value"),
     Input("run-completed-store", "data"),
+    Input("run-scope", "value"),
 )
-def update_dashboard(selected_models, selected_defenses, selected_datasets, selected_runs, tab, _run_completed_token):
+def update_dashboard(tab, _run_completed_token, run_scope):
     # A run finishing writes to run-completed-store purely so the KPI cards/timestamp refresh
     # automatically -- it must never rebuild the experiment tab's own content. Rebuilding it would
     # recreate run-button/refresh-button as fresh component instances, and remounting an
@@ -604,10 +585,9 @@ def update_dashboard(selected_models, selected_defenses, selected_datasets, sele
     # an infinite loop of real model API calls. See incident notes for 2026-06-20.
     skip_tab_content = ctx.triggered_id == "run-completed-store" and tab == "experiment"
 
-    summary = load_data()
-    summary = _apply_sidebar_filters(summary, selected_models, selected_defenses, selected_datasets, selected_runs)
+    full_summary = load_data()
 
-    if summary.empty:
+    if full_summary.empty:
         return (
             card("Evaluations Completed", "0", "No rows yet", COLORS["blue"]),
             card("Task Success Under Attack", "N/A", "Task succeeds and attack fails", COLORS["green"]),
@@ -618,11 +598,56 @@ def update_dashboard(selected_models, selected_defenses, selected_datasets, sele
             no_update if skip_tab_content else experiment_panel(),
         )
 
-    run_status = "Latest completed run -- unknown time"
-    if "run_timestamp" in summary.columns and summary["run_timestamp"].notna().any():
-        formatted = _format_run_timestamp(summary["run_timestamp"].dropna().max())
-        if formatted:
-            run_status = f"Latest completed run · {formatted}"
+    # Scope every tab + KPI card to one run by default -- a single run is fair to compare within
+    # (same scenarios tested against every selected model/defense), whereas pooling rows from
+    # different runs silently mixes unequal sample sizes. "All runs (pooled)" is an explicit,
+    # opt-in exception for KPIs/Vulnerability Analysis/Detailed Results; the Model Comparison
+    # leaderboard always pins to one run (see leaderboard_summary below) since it can't be pooled
+    # fairly at all.
+    run_history_full = summarize_runs(full_summary)
+    has_run_tracking = not run_history_full.empty and "run_group_id" in full_summary.columns
+    pooled = run_scope == "__all__"
+
+    target_run_id = None
+    if has_run_tracking:
+        available_ids = set(run_history_full["run_group_id"])
+        if not pooled:
+            target_run_id = run_scope if run_scope in available_ids else run_history_full.iloc[0]["run_group_id"]
+            summary = full_summary[full_summary["run_group_id"] == target_run_id]
+        else:
+            summary = full_summary
+    else:
+        summary = full_summary
+
+    leaderboard_run_id = target_run_id if not pooled else (
+        run_history_full.iloc[0]["run_group_id"] if has_run_tracking else None
+    )
+    leaderboard_summary = full_summary[full_summary["run_group_id"] == leaderboard_run_id] if leaderboard_run_id is not None else summary
+    leaderboard_run_row = (
+        run_history_full[run_history_full["run_group_id"] == leaderboard_run_id].iloc[0]
+        if leaderboard_run_id is not None
+        else None
+    )
+    leaderboard_note = (
+        "Leaderboard charts always show one run for a fair comparison -- showing the latest run "
+        "since \"All runs (pooled)\" is selected above."
+        if pooled and has_run_tracking
+        else None
+    )
+
+    if pooled:
+        run_status = f"Showing all runs pooled · {len(run_history_full)} run(s), {len(full_summary)} rows"
+    elif has_run_tracking and target_run_id is not None:
+        timestamp = run_history_full[run_history_full["run_group_id"] == target_run_id].iloc[0]["run_timestamp"]
+        formatted = _format_run_timestamp(timestamp) if timestamp else None
+        scope_label = "latest run" if run_scope in (None, "__latest__") else "selected run"
+        run_status = f"Showing {scope_label} · {formatted}" if formatted else f"Showing {scope_label}"
+    else:
+        run_status = "Latest completed run -- unknown time"
+        if "run_timestamp" in summary.columns and summary["run_timestamp"].notna().any():
+            formatted = _format_run_timestamp(summary["run_timestamp"].dropna().max())
+            if formatted:
+                run_status = f"Latest completed run · {formatted}"
 
     attacked = summary[summary["condition"] == "attacked"]
     benign = summary[summary["condition"] == "benign"]
@@ -640,28 +665,27 @@ def update_dashboard(selected_models, selected_defenses, selected_datasets, sele
     if tab == "experiment":
         content = no_update if skip_tab_content else experiment_panel()
     elif tab == "overview":
-        run_history = summarize_runs(summary)
-        has_run_tracking = not run_history.empty and "run_group_id" in summary.columns
-
-        if has_run_tracking:
-            latest = run_history.iloc[0]
-            latest_summary = summary[summary["run_group_id"] == latest["run_group_id"]]
-            chart_heading = f"Latest Run -- {latest['run_timestamp'] or 'unknown time'}"
+        if has_run_tracking and leaderboard_run_row is not None:
+            run_label = "Latest Run" if (pooled or run_scope in (None, "__latest__")) else "Selected Run"
+            chart_heading = f"{run_label} -- {leaderboard_run_row['run_timestamp'] or 'unknown time'}"
             chart_subtitle = (
-                f"dataset: {latest['dataset'] or 'n/a'}  |  model(s): {latest['models'] or 'n/a'}  |  "
-                f"defense(s): {latest['defenses'] or 'n/a'}  |  {latest['rows']} rows"
+                f"dataset: {leaderboard_run_row['dataset'] or 'n/a'}  |  model(s): {leaderboard_run_row['models'] or 'n/a'}  |  "
+                f"defense(s): {leaderboard_run_row['defenses'] or 'n/a'}  |  {leaderboard_run_row['rows']} rows"
             )
         else:
-            latest_summary = summary
             chart_heading = "Latest Run"
             chart_subtitle = "No per-run tracking available for this data -- showing everything currently selected."
 
+        # The accordion always lists every run on record (not just the currently scoped one) so
+        # users can browse/expand any past run regardless of what's selected in the scope dropdown.
         if has_run_tracking:
             accordion_sections = [_run_history_header_row()] + [
                 _run_accordion_section(
-                    run_row, summary[summary["run_group_id"] == run_row["run_group_id"]], is_open=(i == 0)
+                    run_row,
+                    full_summary[full_summary["run_group_id"] == run_row["run_group_id"]],
+                    is_open=(run_row["run_group_id"] == leaderboard_run_id),
                 )
-                for i, (_, run_row) in enumerate(run_history.iterrows())
+                for _, run_row in run_history_full.iterrows()
             ]
         else:
             accordion_sections = [
@@ -672,13 +696,14 @@ def update_dashboard(selected_models, selected_defenses, selected_datasets, sele
             [
                 html.H3(chart_heading, style={"marginTop": 0, "marginBottom": "2px"}),
                 html.Div(chart_subtitle, className="muted", style={"marginBottom": "10px"}),
-                _leaderboard_charts(latest_summary),
-                _best_performer_takeaway(latest_summary),
+                html.Div(leaderboard_note, className="notice", style={"marginBottom": "10px"}) if leaderboard_note else None,
+                _leaderboard_charts(leaderboard_summary),
+                _best_performer_takeaway(leaderboard_summary),
                 html.H3("Run History", style={"marginTop": "26px", "marginBottom": "2px"}),
                 html.Div(
-                    "Every experiment run currently selected by the sidebar filters -- grouped by when the run "
-                    "was submitted (so every model/defense combination launched together stays together) and "
-                    "sorted newest first. Expand a run to see its own model/defense breakdown.",
+                    "Every evaluation run on record, grouped by when the run was submitted (so every "
+                    "model/defense combination launched together stays together) and sorted newest first. "
+                    "Expand a run to see its own model/defense breakdown.",
                     className="muted",
                     style={"marginBottom": "10px"},
                 ),
@@ -687,27 +712,33 @@ def update_dashboard(selected_models, selected_defenses, selected_datasets, sele
             style={"marginTop": "16px"},
         )
     elif tab == "scenarios":
+        scope_phrase = (
+            f"pooled across {len(run_history_full)} runs, which may have tested different models on "
+            "different scenario samples -- bars show sample size (n=) so a thin bar doesn't read as a "
+            "confident result"
+            if pooled
+            else "from the run selected above, where every model/defense was tested on the same scenarios"
+        )
         content = html.Div(
             [
                 html.H3("Attack Success by Scenario Category", style={"marginTop": 0, "marginBottom": "2px"}),
                 html.Div(
-                    "How often the injected attack succeeded in each scenario category, broken down by model "
-                    "(attacked-condition rows only, across whatever the sidebar filters currently select). "
-                    "Lower is better.",
+                    f"How often the injected attack succeeded in each scenario category, broken down by model "
+                    f"(attacked-condition rows only, {scope_phrase}). Lower is better.",
                     className="muted",
                     style={"marginBottom": "10px"},
                 ),
-                dcc.Graph(figure=category_attack_rate(summary), config={"displaylogo": False}),
+                dcc.Graph(figure=category_attack_rate(summary, show_sample_size=pooled), config={"displaylogo": False}),
                 _worst_category_takeaway(summary),
                 html.H3("Most Vulnerable Scenarios", style={"marginTop": "20px", "marginBottom": "2px"}),
                 html.Div(
                     "The 15 individual scenarios with the highest attack success rate, by model -- useful for "
                     "spotting specific weak points rather than category-level trends. If fewer than 15 scenarios "
-                    "match the sidebar filters, all of them are shown.",
+                    "exist, all of them are shown.",
                     className="muted",
                     style={"marginBottom": "10px"},
                 ),
-                dcc.Graph(figure=task_heatmap(summary), config={"displaylogo": False}),
+                dcc.Graph(figure=task_heatmap(summary, show_sample_size=pooled), config={"displaylogo": False}),
             ],
             style={"display": "grid", "gridTemplateColumns": "1fr", "gap": "8px", "marginTop": "16px"},
         )
@@ -727,21 +758,12 @@ def update_dashboard(selected_models, selected_defenses, selected_datasets, sele
         ]
         content = html.Div(
             [
-                html.H3("Run Drilldown", style={"marginTop": 0, "marginBottom": "2px"}),
-                html.Div(
-                    f"Every individual scenario row currently selected by the sidebar filters (showing up to "
-                    f"300 of {len(summary)} rows). Sort or filter any column to dig into specific models, "
-                    f"categories, or attack techniques.",
-                    className="muted",
-                    style={"marginBottom": "2px"},
-                ),
-                html.Div(
-                    "Red row = the injected attack succeeded (defense failed). Green row = task success "
-                    "under attack (task completed and the attack was resisted). The Status column states the "
-                    "same outcome in words. Scenario ID, dataset, full task/output text, and errors are hidden "
-                    "by default -- use \"Toggle Columns\" above the table to show them.",
-                    className="muted",
-                    style={"marginBottom": "10px"},
+                html.H3("Detailed Results", style={"marginTop": 0, "marginBottom": "10px"}),
+                dcc.Checklist(
+                    id="drilldown-show-hidden-columns",
+                    options=[{"label": " Show all columns (scenario ID, dataset, full task/output text, errors)", "value": "all"}],
+                    value=[],
+                    style={"marginBottom": "10px", "fontSize": "13px", "color": COLORS["muted"]},
                 ),
                 dash_table.DataTable(
                     id="drilldown-table",
@@ -791,8 +813,8 @@ def update_dashboard(selected_models, selected_defenses, selected_datasets, sele
     )
 
 
-_DEFAULT_PROGRESS_STEPS = [{"label": "Ready", "status": "done", "detail": "Choose settings and click Run Experiment."}]
-_DEFAULT_LOG_TEXT = "Ready. Choose settings and click Run Experiment. The log updates when the run completes."
+_DEFAULT_PROGRESS_STEPS = [{"label": "Ready", "status": "done", "detail": "Choose settings and click Run Evaluation."}]
+_DEFAULT_LOG_TEXT = "Ready. Choose settings and click Run Evaluation. The log updates when the run completes."
 
 
 def _progress_step_row(step: dict):
@@ -888,7 +910,7 @@ def experiment_panel():
                 [
                     html.Div(
                         [
-                            html.H3("Configure Experiment", style={"marginTop": 0}),
+                            html.H3("Configure Evaluation", style={"marginTop": 0}),
                             dcc.Store(id="open-config-section-store", data=1),
                             _config_section(
                                 1,
@@ -1064,12 +1086,18 @@ def experiment_panel():
                             html.Div(id="run-summary", className="notice"),
                             html.Div(
                                 [
-                                    html.Button("Run Experiment", id="run-button", n_clicks=0, className="button-primary"),
+                                    html.Button("Run Evaluation", id="run-button", n_clicks=0, className="button-primary"),
                                     html.Button("Refresh Results", id="refresh-button", n_clicks=0, className="button-secondary"),
                                 ],
                                 style={"marginTop": "18px"},
                             ),
-                            html.Div("Runs can take a while because every selected model/defense/scenario makes real API calls.", className="muted"),
+                            html.Div("Run Evaluation can take a while because every selected model/defense/scenario makes real API calls.", className="muted"),
+                            html.Div(
+                                "Refresh Results re-parses already-completed raw results and rebuilds the analytics shown in "
+                                "the other tabs -- it does not launch new model calls or cost anything.",
+                                className="muted",
+                                style={"marginTop": "2px"},
+                            ),
                         ],
                         className="card",
                     ),
@@ -1077,13 +1105,13 @@ def experiment_panel():
                         [
                             html.Div(
                                 [
-                                    html.H3("Experiment Status", style={"marginTop": 0, "marginBottom": 0}),
+                                    html.H3("Evaluation Status", style={"marginTop": 0, "marginBottom": 0}),
                                     html.Div("Idle", id="run-status-badge", className="status-badge status-badge--idle"),
                                 ],
                                 style={"display": "flex", "alignItems": "center", "justifyContent": "space-between"},
                             ),
                             html.Div(
-                                "Choose settings and click Run Experiment to see live progress here.",
+                                "Choose settings and click Run Evaluation to see live progress here.",
                                 id="status-idle-note",
                                 className="muted",
                                 style={"marginTop": "10px"},
@@ -1230,6 +1258,15 @@ def toggle_config_section(_c1, _c2, _c3, currently_open):
         _section_summary_style(is_open[3]),
         open_section,
     )
+
+
+@app.callback(
+    Output("drilldown-table", "hidden_columns"),
+    Input("drilldown-show-hidden-columns", "value"),
+    prevent_initial_call=True,
+)
+def toggle_drilldown_columns(show_all_value):
+    return [] if show_all_value else _DRILLDOWN_HIDDEN_COLUMNS
 
 
 def _summarize_list(values: list[str], all_label: str, limit: int = 2) -> str:
@@ -1420,14 +1457,14 @@ def update_run_limit_bounds(dataset_source, _upload_status, categories, attack_t
         (Output("refresh-button", "disabled"), True, False),
         (
             Output("kpi-running-banner", "children"),
-            "Running experiment now -- the KPI cards and charts below still show the previous run's "
+            "Running evaluation now -- the KPI cards and charts below still show the previous run's "
             "results until this finishes.",
             "",
         ),
         (Output("kpi-running-banner", "style"), {"display": "block", "marginBottom": "10px"}, {"display": "none"}),
         (Output("run-status-badge", "children"), "Running...", no_update),
         (Output("run-status-badge", "className"), "status-badge status-badge--running", no_update),
-        # Expand the Experiment Status panel for the duration of the run -- it starts compact
+        # Expand the Evaluation Status panel for the duration of the run -- it starts compact
         # (idle note only) and stays expanded once a real run/refresh has actually happened.
         # The "after" value must be an explicit dict, not no_update: for a dict-shaped prop like
         # style, Dash resolves a no_update resting value to an empty object at initial page load
@@ -1529,10 +1566,10 @@ def run_experiment(
             scenario_arg = ["--scenario-path", str(SELECTED_PATH)]
 
             # One run_group_id shared by every model/defense combination launched from this
-            # single click, so they're grouped together as one run in the Overview tab
-            # (by when the experiment was submitted) instead of one run per subprocess call.
+            # single click, so they're grouped together as one run in the Model Comparison tab
+            # (by when the evaluation was submitted) instead of one run per subprocess call.
             run_group_id = str(int(time.time()))
-            logs.append("Starting experiment...")
+            logs.append("Starting evaluation...")
             for model in models:
                 for defense in defenses:
                     command = [
@@ -1562,7 +1599,7 @@ def run_experiment(
         logs.append(run_command(["scripts/build_analytics_db.py"]))
         logs.append(run_command(["scripts/make_report.py"]))
         add_step("Refresh analytics")
-        complete_detail = "Open Overview, Scenario Analysis, or Run Drilldown to inspect the updated results."
+        complete_detail = "Open Model Comparison, Vulnerability Analysis, or Detailed Results to inspect the updated results."
         logs.append(f"Complete. {complete_detail}")
         add_step("Complete", detail=complete_detail)
         return (
@@ -1575,7 +1612,7 @@ def run_experiment(
             {"display": "block"},
         )
     except Exception as exc:
-        logs.append(f"Experiment failed:\n{exc}")
+        logs.append(f"Evaluation failed:\n{exc}")
         add_step("Failed", detail=str(exc), status="error")
         return (
             "\n\n".join(logs),
